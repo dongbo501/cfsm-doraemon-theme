@@ -44,5 +44,6 @@ test-results/
 # Vite
 *.timestamp-*-*.mjs
 
-# Theme build output
-theme.tar.gz
+
+# Local CF-Server-Monitor worker secrets
+.dev.vars

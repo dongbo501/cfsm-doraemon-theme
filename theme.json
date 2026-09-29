@@ -1,10 +1,9 @@
 {
-  "name": "Doraemon Probe",
-  "short": "doraemon",
-  "description": "哆啦A梦主题的极简探针：竹蜻蜓转速、四次元口袋、百宝袋、任意门传送网络与黄铃铛彩蛋",
-  "version": "1.1.0",
+  "name": "Doraemon Probe for CF-Server-Monitor",
+  "description": "CF-Server-Monitor 的哆啦A梦主题：竹蜻蜓转速、四次元口袋、百宝袋、任意门传送网络与黄铃铛彩蛋",
+  "version": "1.0.0",
   "author": "dongbo501",
-  "url": "https://github.com/dongbo501/minimalist-probe-doraemon-theme",
+  "url": "https://github.com/dongbo501/cfsm-doraemon-theme",
   "config": [
     {
       "type": "title",
@@ -29,22 +28,22 @@
           "label": "夜空充电模式"
         }
       ],
-      "help": "beijing=北京时间 07:00-18:59 使用晴空模式、其余时间使用夜空充电模式；light=晴空模式；dark=夜空充电模式。前端右上角按钮可仅为当前浏览器临时切换。"
+      "help": "beijing=北京时间 07:00-18:59 使用晴空模式、其余时间使用夜空充电模式；light=晴空模式；dark=夜空充电模式。从未保存过主题设置时，沿用 CF-Server-Monitor 后台外观设置里的默认外观。前端右上角按钮可仅为当前浏览器临时切换。"
     },
     {
       "key": "dataUpdateInterval",
       "type": "number",
       "label": "道具数据更新间隔",
-      "default": 3,
-      "min": 1,
-      "max": 60,
-      "help": "HTTP 轮询模式下节点实时数据的刷新间隔，单位：秒（1-60）。WebSocket 模式固定由 hub 每 2 秒推送。"
+      "default": 10,
+      "min": 3,
+      "max": 300,
+      "help": "仅 HTTP 轮询模式使用：首页轮询 /api/servers、详情页轮询 /api/server 的间隔，单位：秒（3-300）。每次轮询都会消耗 Workers 请求与 D1 读取额度，建议不低于 10 秒。"
     },
     {
       "key": "rpcTransportMode",
       "type": "select",
       "label": "任意门数据连接方式",
-      "default": "http",
+      "default": "websocket",
       "options": [
         {
           "value": "http",
@@ -52,10 +51,10 @@
         },
         {
           "value": "websocket",
-          "label": "WebSocket 实时推送"
+          "label": "WebSocket 实时推送（推荐）"
         }
       ],
-      "help": "http=按下方间隔轮询 /api/nodes；websocket=使用 hub 的 /api/ws 每 2 秒推送（反向代理需放行 WebSocket）。"
+      "help": "websocket=订阅 /api/ws，探针上报后立即推送（首页 subscribe=all，详情页只订阅当前服务器，反向代理需放行 WebSocket）；http=按下方间隔轮询。WebSocket 连续失败时会自动改用 HTTP 轮询。"
     },
     {
       "key": "defaultViewMode",

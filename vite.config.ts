@@ -1,8 +1,6 @@
-import type { Plugin } from 'vite'
-import { execFileSync, execSync } from 'node:child_process'
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { execSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, URL } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
@@ -12,25 +10,18 @@ import { defineConfig } from 'vite'
 import vueDevTools from 'vite-plugin-vue-devtools'
 
 interface ThemeManifest {
-  short?: unknown
   version?: unknown
 }
 
-const THEME_SHORT_REGEX = /^[\w-]+$/
 const themeJsonPath = resolve(__dirname, 'theme.json')
-// 开发服务器把 /api 和 WebSocket 代理到这个 hub，不设时代理到本机 9911
-const hubTarget = process.env.MONITOR_HUB || 'http://127.0.0.1:9911'
+// 开发服务器把 /api（含 WebSocket）以及默认皮肤的 /flags、/os-icons 代理到这个 CFSM Worker
+const cfsmTarget = process.env.CFSM_API || 'http://127.0.0.1:8787'
 
-function readThemeManifest(): ThemeManifest {
+function getThemeVersion(): string {
   if (!existsSync(themeJsonPath))
     throw new Error('theme.json not found')
 
-  return JSON.parse(readFileSync(themeJsonPath, 'utf-8')) as ThemeManifest
-}
-
-function getThemeVersion(): string {
-  const version = readThemeManifest().version
-
+  const version = (JSON.parse(readFileSync(themeJsonPath, 'utf-8')) as ThemeManifest).version
   if (typeof version !== 'string' || !version.trim())
     throw new TypeError('theme.json does not contain a top-level string version field')
 
@@ -47,47 +38,9 @@ function getCommitHash(): string {
 }
 
 /**
- * Vite 插件：构建后打包极简探针主题
- * hub 安装时在包的根目录找 theme.json，所以文件直接放在根目录，不套一层目录：
- * theme.tar.gz
- * ├── theme.json
- * ├── preview.png
- * └── dist/
+ * CF-Server-Monitor 只从主题目录读取 index.html 和 assets/，
+ * 所以构建产物只有这两样：public/ 下的静态文件也都放在 public/assets/ 里。
  */
-function monitorThemePackage(): Plugin {
-  return {
-    name: 'monitor-theme-package',
-    apply: 'build',
-    closeBundle: () => {
-      const short = readThemeManifest().short
-      if (typeof short !== 'string' || !THEME_SHORT_REGEX.test(short))
-        throw new TypeError('theme.json short must use letters, digits, - or _')
-
-      const distDir = resolve(__dirname, 'dist')
-      if (!existsSync(distDir)) {
-        console.log('[monitor-theme] dist directory not found, skipping package')
-        return
-      }
-
-      const stage = mkdtempSync(join(tmpdir(), 'monitor-theme-'))
-      const entries = ['theme.json', 'dist']
-      cpSync(themeJsonPath, join(stage, 'theme.json'))
-      const previewPath = resolve(__dirname, 'preview.png')
-      if (existsSync(previewPath)) {
-        cpSync(previewPath, join(stage, 'preview.png'))
-        entries.push('preview.png')
-      }
-      cpSync(distDir, join(stage, 'dist'), { recursive: true })
-
-      const output = resolve(__dirname, 'theme.tar.gz')
-      execFileSync('tar', ['-czf', output, '-C', stage, ...entries])
-      rmSync(stage, { recursive: true, force: true })
-      const sizeMB = (statSync(output).size / 1024 / 1024).toFixed(2)
-      console.log(`[monitor-theme] Created theme.tar.gz (${short} v${getThemeVersion()}, ${sizeMB} MB)`)
-    },
-  }
-}
-
 export default defineConfig({
   define: {
     __BUILD_VERSION__: JSON.stringify(getThemeVersion()),
@@ -97,7 +50,6 @@ export default defineConfig({
     vue(),
     vueDevTools(),
     tailwindcss(),
-    monitorThemePackage(),
   ],
   resolve: {
     alias: {
@@ -108,13 +60,23 @@ export default defineConfig({
     host: '0.0.0.0',
     proxy: {
       '/api': {
-        target: hubTarget,
+        target: cfsmTarget,
         changeOrigin: true,
         ws: true,
+      },
+      '/flags': {
+        target: cfsmTarget,
+        changeOrigin: true,
+      },
+      '/os-icons': {
+        target: cfsmTarget,
+        changeOrigin: true,
       },
     },
   },
   build: {
+    outDir: 'dist',
+    assetsDir: 'assets',
     target: ['es2018', 'safari15.4'],
     cssTarget: 'safari15.4',
     chunkSizeWarningLimit: 600,

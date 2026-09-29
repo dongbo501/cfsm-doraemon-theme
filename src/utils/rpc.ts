@@ -2,18 +2,27 @@
  * 主题内部使用的数据类型与数据访问接口
  *
  * 类型沿用主题原有的结构（节点信息 Client、实时状态 NodeStatus、历史记录等），
- * 数据全部来自极简探针 hub 的公开接口，转换逻辑见 ./hub.ts。
+ * 数据全部来自 CF-Server-Monitor 的公开接口，转换逻辑见 ./cfsm.ts。
  */
 
-import type { HubHistory, HubPingRow } from '@/utils/hub'
+import type { CfsmHistoryRow, ProbeSample } from '@/utils/cfsm'
+import { PING_SUMMARY_MAX_COUNT } from '@/constants/load'
 import {
   ADMIN_HISTORY_HOURS,
-  fetchNodeHistory,
-  getKnownProbes,
-  HubError,
+  CfsmError,
+  fetchHistory,
+  getLatencyWindow,
+  historyWindowFor,
+  isLatencyWindowEnabled,
+  mibToBytes,
+  numOrNaN,
+  parseGpuInfo,
+  parseLoadAvg,
+  probeName,
+  PROBES,
+  probeSamplesFromRow,
   PUBLIC_HISTORY_HOURS,
-  rememberProbes,
-} from '@/utils/hub'
+} from '@/utils/cfsm'
 
 // ==================== 类型定义 ====================
 
@@ -137,7 +146,7 @@ export interface StatusRecord {
   disk_total: number
   net_in: number
   net_out: number
-  /** 桶内最高网速（hub 历史提供） */
+  /** 桶内最高网速（可选） */
   net_in_max?: number
   net_out_max?: number
   net_total_up: number
@@ -320,7 +329,7 @@ export class RpcError extends Error {
 const METHOD_NOT_FOUND = -32601
 
 function toRpcError(error: unknown): unknown {
-  if (error instanceof HubError)
+  if (error instanceof CfsmError)
     return new RpcError(error.status, error.message)
   return error
 }
@@ -328,7 +337,7 @@ function toRpcError(error: unknown): unknown {
 // ==================== 节点上下文 ====================
 
 /**
- * 历史记录里只有已用量，总量来自节点快照；汇总查询需要知道当前可见的节点。
+ * 历史记录里的总量字段可能缺失，用节点快照补齐；汇总查询需要知道当前可见的节点。
  * 由 init 在每次拿到快照时更新。
  */
 interface NodeContext {
@@ -341,9 +350,10 @@ const nodeContext = new Map<string, NodeContext>()
 let visibleNodeIds: string[] = []
 let historyCeiling = PUBLIC_HISTORY_HOURS
 
-export function updateNodeContext(statuses: Record<string, NodeStatus>, authed: boolean): void {
+export function updateNodeContext(statuses: Record<string, NodeStatus>, authed: boolean, replaceVisible = true): void {
   historyCeiling = authed ? ADMIN_HISTORY_HOURS : PUBLIC_HISTORY_HOURS
-  visibleNodeIds = Object.keys(statuses)
+  if (replaceVisible)
+    visibleNodeIds = Object.keys(statuses)
   for (const [uuid, status] of Object.entries(statuses)) {
     nodeContext.set(uuid, {
       mem_total: status.ram_total,
@@ -361,13 +371,13 @@ export function getHistoryCeilingHours(): number {
 // ==================== 实时采样缓冲 ====================
 
 /**
- * 实时图表使用浏览器收到的每一帧快照，这样负载、TCP/UDP、进程数等 hub 历史里没有的
- * 指标在实时视图中也有曲线。刚打开页面、缓冲还不够时，用最近 1 小时的历史补齐。
+ * 实时图表使用浏览器收到的每一个采样点（WebSocket 推送或轮询快照），
+ * 刚打开页面、缓冲还不够时，用最近 1 小时的历史补齐。
  */
 const LIVE_BUFFER_SIZE = 150
 const liveSamples = new Map<string, StatusRecord[]>()
 
-function recordLiveSample(status: NodeStatus): void {
+export function recordLiveSample(status: NodeStatus): void {
   if (!status.online || status.message === 'unavailable' || !status.time)
     return
   const buffer = liveSamples.get(status.client) ?? []
@@ -378,7 +388,7 @@ function recordLiveSample(status: NodeStatus): void {
     client: status.client,
     time: status.time,
     cpu: status.cpu,
-    gpu: Number.NaN,
+    gpu: status.gpu_count ? status.gpu : Number.NaN,
     ram: status.ram,
     ram_total: status.ram_total,
     swap: status.swap,
@@ -406,47 +416,112 @@ function recordLiveSample(status: NodeStatus): void {
 
 // ==================== 历史转换 ====================
 
-/** hub 历史只保存 CPU、内存、磁盘和网速；其余指标以 NaN 表示「没有数据」，图表会跳过 */
-function historyToStatusRecords(uuid: string, history: HubHistory): StatusRecord[] {
+/** CFSM 历史行 → 主题的状态记录；缺失的指标以 NaN 表示「没有数据」，图表会跳过 */
+function rowToStatusRecord(uuid: string, row: CfsmHistoryRow): StatusRecord {
   const context = nodeContext.get(uuid)
-  return history.metrics.map(row => ({
+  const [load1, load5, load15] = parseLoadAvg(row.load_avg)
+  const gpuUsages = parseGpuInfo(row.gpu_info).map(gpu => gpu.info).filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
+  return {
     client: uuid,
-    time: new Date(row.ts * 1000).toISOString(),
-    cpu: row.cpu,
-    gpu: Number.NaN,
-    ram: row.mem_used,
-    ram_total: context?.mem_total ?? 0,
-    swap: Number.NaN,
-    swap_total: context?.swap_total ?? 0,
-    load: Number.NaN,
-    load5: Number.NaN,
-    load15: Number.NaN,
+    time: new Date(row.timestamp).toISOString(),
+    cpu: numOrNaN(row.cpu),
+    gpu: gpuUsages.length ? gpuUsages.reduce((sum, v) => sum + v, 0) / gpuUsages.length : Number.NaN,
+    ram: mibToBytes(row.ram_used, Number.NaN),
+    ram_total: mibToBytes(row.ram_total, context?.mem_total ?? 0),
+    swap: mibToBytes(row.swap_used, Number.NaN),
+    swap_total: mibToBytes(row.swap_total, context?.swap_total ?? 0),
+    load: load1,
+    load5,
+    load15,
     temp: Number.NaN,
-    disk: row.disk_used,
-    disk_total: context?.disk_total ?? 0,
-    net_in: row.net_rx,
-    net_out: row.net_tx,
-    net_in_max: row.net_rx_max,
-    net_out_max: row.net_tx_max,
+    disk: mibToBytes(row.disk_used, Number.NaN),
+    disk_total: mibToBytes(row.disk_total, context?.disk_total ?? 0),
+    net_in: numOrNaN(row.net_in_speed),
+    net_out: numOrNaN(row.net_out_speed),
     net_total_up: Number.NaN,
     net_total_down: Number.NaN,
-    process: Number.NaN,
-    connections: Number.NaN,
-    connections_udp: Number.NaN,
-  }))
+    process: numOrNaN(row.processes),
+    connections: numOrNaN(row.tcp_conn),
+    connections_udp: numOrNaN(row.udp_conn),
+  }
+}
+
+interface ResolvedRange {
+  /** 请求 /api/history/all 使用的档位 */
+  window: number
+  from: number
+  to: number
+}
+
+/** CFSM 只接受「最近 N 小时」的固定档位：取覆盖所需时段的最小档位，再裁剪到所需时段 */
+function resolveRange(params: { hours?: number, start?: string | number, start_time?: string | number, end?: string | number, end_time?: string | number }): ResolvedRange {
+  const startValue = params.start ?? params.start_time
+  const endValue = params.end ?? params.end_time
+  const now = Date.now()
+  if (startValue !== undefined) {
+    const from = new Date(startValue).getTime()
+    const to = endValue !== undefined ? new Date(endValue).getTime() : now
+    if (Number.isFinite(from)) {
+      return {
+        window: historyWindowFor((now - from) / 3_600_000, historyCeiling),
+        from,
+        to: Number.isFinite(to) ? to : now,
+      }
+    }
+  }
+  const hours = Math.min(historyCeiling, Math.max(0.167, params.hours ?? 6))
+  return { window: historyWindowFor(hours, historyCeiling), from: now - hours * 3_600_000, to: now }
+}
+
+async function loadHistoryRows(uuid: string, range: ResolvedRange, signal?: AbortSignal): Promise<CfsmHistoryRow[]> {
+  const rows = await fetchHistory(uuid, range.window, signal)
+  return rows.filter(row => row.timestamp >= range.from && row.timestamp <= range.to)
+}
+
+/** 已见过的探测路线，按固定顺序（三网、BGP、自定义节点）排列 */
+const seenProbeTasks = new Set<number>()
+
+function rememberProbeSamples(samples: ProbeSample[]): void {
+  for (const sample of samples)
+    seenProbeTasks.add(sample.taskId)
 }
 
 /**
- * 兼容路径的延迟记录：每个时间桶一条，桶内全部丢失时记为 -1。
- * 桶内部分丢失的比例只有指标路径（ping.loss）能表达，见 queryPublicMetrics。
+ * 延迟数据。首页卡片的延迟小图（max_points 不超过摘要点数）直接使用 /api/servers 附带的
+ * 2 小时窗口，不为每张卡片单独查询历史；后台关闭三网详情时窗口为空，卡片不显示延迟小图。
+ * 详情页图表按所选时段读取历史。
  */
-function pingRowsToRecords(uuid: string, rows: HubPingRow[]): PingRecord[] {
-  return rows.map(row => ({
+async function loadProbeSamples(uuid: string, range: ResolvedRange, maxPoints: number | undefined, signal?: AbortSignal): Promise<ProbeSample[]> {
+  let samples: ProbeSample[]
+  if (maxPoints !== undefined && maxPoints <= PING_SUMMARY_MAX_COUNT) {
+    samples = isLatencyWindowEnabled() ? (getLatencyWindow(uuid) ?? []) : []
+    samples = samples.filter(sample => sample.ts >= range.from && sample.ts <= range.to)
+  }
+  else {
+    const rows = await loadHistoryRows(uuid, range, signal)
+    samples = rows.flatMap(row => probeSamplesFromRow(row, row.timestamp))
+  }
+  rememberProbeSamples(samples)
+  return samples
+}
+
+function samplesToRecords(uuid: string, samples: ProbeSample[]): PingRecord[] {
+  return samples.map(sample => ({
     client: uuid,
-    task_id: row.task_id,
-    time: new Date(row.ts * 1000).toISOString(),
-    value: typeof row.latency === 'number' ? row.latency : -1,
+    task_id: sample.taskId,
+    time: new Date(sample.ts).toISOString(),
+    value: sample.latency ?? -1,
   }))
+}
+
+function groupByTask(samples: ProbeSample[]): Map<number, ProbeSample[]> {
+  const byTask = new Map<number, ProbeSample[]>()
+  for (const sample of samples) {
+    const list = byTask.get(sample.taskId) ?? []
+    list.push(sample)
+    byTask.set(sample.taskId, list)
+  }
+  return new Map([...byTask.entries()].sort((a, b) => a[0] - b[0]))
 }
 
 function percentile(sorted: number[], p: number): number | undefined {
@@ -460,21 +535,8 @@ function percentile(sorted: number[], p: number): number | undefined {
   return a + (b - a) * (position - lower)
 }
 
-function pingStatsFor(uuid: string, history: HubHistory): PingMetricTaskStats[] {
-  const byTask = new Map<number, HubPingRow[]>()
-  for (const row of history.ping) {
-    const rows = byTask.get(row.task_id) ?? []
-    rows.push(row)
-    byTask.set(row.task_id, rows)
-  }
-  // 分配了监控但窗口内没有任何结果的，同样列出
-  for (const id of Object.keys(history.probes)) {
-    const numericId = Number(id)
-    if (Number.isFinite(numericId) && !byTask.has(numericId))
-      byTask.set(numericId, [])
-  }
-
-  return Array.from(byTask.entries(), ([taskId, rows]) => {
+function pingStatsFor(uuid: string, samples: ProbeSample[]): PingMetricTaskStats[] {
+  return Array.from(groupByTask(samples).entries(), ([taskId, rows]) => {
     const latencies = rows.map(row => row.latency).filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
     const sorted = [...latencies].sort((a, b) => a - b)
     const avg = latencies.length ? latencies.reduce((sum, v) => sum + v, 0) / latencies.length : undefined
@@ -487,12 +549,12 @@ function pingStatsFor(uuid: string, history: HubHistory): PingMetricTaskStats[] 
     return {
       entity_id: uuid,
       task_id: String(taskId),
-      name: history.probes[String(taskId)] ?? `监控 ${taskId}`,
+      name: probeName(taskId),
       tags: { task_id: String(taskId) },
       total: rows.length,
       valid: latencies.length,
-      // hub 按整个窗口的样本数算出的丢包率，比按桶平均更准确；没有丢包的监控不在 loss 里
-      loss: history.loss[String(taskId)] ?? 0,
+      // 探针每轮上报的丢包率按时间平均
+      loss: rows.length ? rows.reduce((sum, row) => sum + row.loss, 0) / rows.length : 0,
       loss_approximate: false,
       min: sorted[0],
       max: sorted.at(-1),
@@ -506,49 +568,21 @@ function pingStatsFor(uuid: string, history: HubHistory): PingMetricTaskStats[] 
   })
 }
 
-/** 自定义时间段：hub 只接受「最近 N 小时」，取覆盖起点的窗口后再裁剪 */
-function resolveRange(params: { hours?: number, start?: string | number, start_time?: string | number, end?: string | number, end_time?: string | number }): { hours: number, from: number, to: number } {
-  const startValue = params.start ?? params.start_time
-  const endValue = params.end ?? params.end_time
-  const now = Date.now()
-  if (startValue !== undefined) {
-    const from = new Date(startValue).getTime()
-    const to = endValue !== undefined ? new Date(endValue).getTime() : now
-    if (Number.isFinite(from)) {
-      const hours = Math.min(historyCeiling, Math.max(1, Math.ceil((now - from) / 3_600_000)))
-      return { hours, from, to: Number.isFinite(to) ? to : now }
-    }
-  }
-  const hours = Math.min(historyCeiling, Math.max(1, Math.floor(params.hours ?? 6)))
-  return { hours, from: Number.NEGATIVE_INFINITY, to: Number.POSITIVE_INFINITY }
-}
-
-function withinRange(history: HubHistory, from: number, to: number): HubHistory {
-  if (!Number.isFinite(from) && !Number.isFinite(to))
-    return history
-  const keep = (ts: number) => ts * 1000 >= from && ts * 1000 <= to
-  return {
-    ...history,
-    metrics: history.metrics.filter(row => keep(row.ts)),
-    ping: history.ping.filter(row => keep(row.ts)),
-  }
-}
-
 const PING_LATENCY_KEY = 'ping.latency_ms'
 const PING_LOSS_KEY = 'ping.loss'
 
 // ==================== 数据访问 ====================
 
-export class HubRpc {
+export class CfsmRpc {
   /** 单节点最近的状态：实时缓冲 + 最近 1 小时历史 */
   async getNodeRecentStatus(uuid: string): Promise<{ count: number, records: StatusRecord[] }> {
     const live = liveSamples.get(uuid) ?? []
     let records = [...live]
     if (live.length < LIVE_BUFFER_SIZE) {
       try {
-        const history = await fetchNodeHistory(uuid, { hours: 1, series: 'metrics' })
+        const rows = await loadHistoryRows(uuid, resolveRange({ hours: 1 }))
         const firstLive = live[0]?.time
-        const older = historyToStatusRecords(uuid, history).filter(record => !firstLive || record.time < firstLive)
+        const older = rows.map(row => rowToStatusRecord(uuid, row)).filter(record => !firstLive || record.time < firstLive)
         records = [...older, ...live].slice(-LIVE_BUFFER_SIZE)
       }
       catch (error) {
@@ -560,14 +594,13 @@ export class HubRpc {
   }
 
   /** 负载历史。未指定节点时逐个查询当前可见节点（经过并发队列） */
-  async getLoadRecords(uuid?: string, hours = 6, _loadType?: string, maxCount?: number, signal?: AbortSignal): Promise<{ records: StatusRecord[] | Record<string, StatusRecord[]> }> {
-    const safeHours = Math.min(historyCeiling, Math.max(1, Math.floor(hours)))
-    const points = maxCount ? Math.min(1440, maxCount) : undefined
+  async getLoadRecords(uuid?: string, hours = 6, _loadType?: string, _maxCount?: number, signal?: AbortSignal): Promise<{ records: StatusRecord[] | Record<string, StatusRecord[]> }> {
+    const range = resolveRange({ hours })
     const ids = uuid ? [uuid] : visibleNodeIds
     try {
       const entries = await Promise.all(ids.map(async (id) => {
-        const history = await fetchNodeHistory(id, { hours: safeHours, points, series: 'metrics' }, signal)
-        return [id, historyToStatusRecords(id, history)] as const
+        const rows = await loadHistoryRows(id, range, signal)
+        return [id, rows.map(row => rowToStatusRecord(id, row))] as const
       }))
       if (uuid)
         return { records: entries[0]?.[1] ?? [] }
@@ -580,36 +613,36 @@ export class HubRpc {
 
   /** 延迟历史（兼容路径） */
   async getPingRecords(taskId?: number, hours = 6, maxCount?: number, signal?: AbortSignal, uuid?: string): Promise<{ records: PingRecord[], tasks?: PingTaskInfo[] }> {
-    const safeHours = Math.min(historyCeiling, Math.max(1, Math.floor(hours)))
-    const points = maxCount ? Math.min(1440, maxCount) : undefined
+    const range = resolveRange({ hours })
     const ids = uuid ? [uuid] : visibleNodeIds
     try {
-      const histories = await Promise.all(ids.map(async id => [id, await fetchNodeHistory(id, { hours: safeHours, points, series: 'ping' }, signal)] as const))
+      const results = await Promise.all(ids.map(async id => [id, await loadProbeSamples(id, range, maxCount, signal)] as const))
       const records: PingRecord[] = []
       const taskMap = new Map<number, PingTaskInfo>()
-      for (const [id, history] of histories) {
-        rememberProbes(history)
-        const rows = taskId === undefined ? history.ping : history.ping.filter(row => row.task_id === taskId)
-        records.push(...pingRowsToRecords(id, rows))
-        for (const stat of pingStatsFor(id, history)) {
+      for (const [id, samples] of results) {
+        const rows = taskId === undefined ? samples : samples.filter(sample => sample.taskId === taskId)
+        records.push(...samplesToRecords(id, rows))
+        for (const stat of pingStatsFor(id, samples)) {
           const numericId = Number(stat.task_id)
           if (!taskMap.has(numericId))
-            taskMap.set(numericId, { id: numericId, name: stat.name ?? `监控 ${numericId}`, interval: 0, loss: stat.loss })
+            taskMap.set(numericId, { id: numericId, name: stat.name ?? probeName(numericId), interval: 0, loss: stat.loss })
         }
       }
-      return { records, tasks: [...taskMap.values()] }
+      return { records, tasks: [...taskMap.values()].sort((a, b) => a.id - b.id) }
     }
     catch (error) {
       throw toRpcError(error)
     }
   }
 
-  /** 已知的延迟监控（名称随各节点的历史一起返回，按面板顺序） */
+  /** 已出现过数据的探测路线（名称来自后台设置的三网 / 节点显示名） */
   async getPublicPingTasks(): Promise<PingTaskInfo[]> {
-    return getKnownProbes().map(probe => ({ id: probe.id, name: probe.name, interval: 0, loss: 0 }))
+    return PROBES
+      .filter(probe => seenProbeTasks.has(probe.taskId))
+      .map(probe => ({ id: probe.taskId, weight: probe.taskId, name: probeName(probe.taskId), interval: 0, loss: 0 }))
   }
 
-  /** 指标目录：hub 按桶给出延迟中位数和丢包率，对应主题的 ping 指标 */
+  /** 指标目录：CFSM 的历史里有每路探测的延迟和丢包，对应主题的 ping 指标 */
   async listPublicMetricDefinitions(): Promise<MetricDefinition[]> {
     return [
       { name: PING_LATENCY_KEY, description: '延迟', type: 'gauge', unit: 'ms', retention_days: 0 },
@@ -623,29 +656,21 @@ export class HubRpc {
     const wantsLatency = keys.has(PING_LATENCY_KEY)
     const wantsLoss = keys.has(PING_LOSS_KEY)
     const entity = params.entity_id ?? params.entity_ids?.[0]
-    const { hours, from, to } = resolveRange(params)
     if (!entity || (!wantsLatency && !wantsLoss))
-      throw new RpcError(METHOD_NOT_FOUND, 'metric not available on this hub')
+      throw new RpcError(METHOD_NOT_FOUND, 'metric not available')
 
-    const maxPoints = params.max_points ?? params.downsample_points
-    let history: HubHistory
+    const range = resolveRange(params)
+    let samples: ProbeSample[]
     try {
-      history = withinRange(await fetchNodeHistory(entity, { hours, points: maxPoints, series: 'ping' }, signal), from, to)
+      samples = await loadProbeSamples(entity, range, params.max_points ?? params.downsample_points, signal)
     }
     catch (error) {
       throw toRpcError(error)
     }
-    rememberProbes(history)
 
     const series: MetricSeries[] = []
-    const byTask = new Map<number, HubPingRow[]>()
-    for (const row of history.ping) {
-      const rows = byTask.get(row.task_id) ?? []
-      rows.push(row)
-      byTask.set(row.task_id, rows)
-    }
-    for (const [taskId, rows] of byTask) {
-      const tags = { task_id: String(taskId), name: history.probes[String(taskId)] ?? `监控 ${taskId}` }
+    for (const [taskId, rows] of groupByTask(samples)) {
+      const tags = { task_id: String(taskId), name: probeName(taskId) }
       if (wantsLatency) {
         series.push({
           metric_key: PING_LATENCY_KEY,
@@ -654,7 +679,7 @@ export class HubRpc {
           tags,
           downsampled: true,
           count: rows.length,
-          points: rows.map(row => ({ time: new Date(row.ts * 1000).toISOString(), value: row.latency ?? null })),
+          points: rows.map(row => ({ time: new Date(row.ts).toISOString(), value: row.latency })),
         })
       }
       if (wantsLoss) {
@@ -665,48 +690,37 @@ export class HubRpc {
           tags,
           downsampled: true,
           count: rows.length,
-          // hub 的桶丢包率是百分比整数，主题的 ping.loss 是 0-1 比例
-          points: rows.map(row => ({ time: new Date(row.ts * 1000).toISOString(), value: (row.loss ?? 0) / 100, count: 1 })),
+          // CFSM 的丢包是百分比，主题的 ping.loss 是 0-1 比例
+          points: rows.map(row => ({ time: new Date(row.ts).toISOString(), value: row.loss / 100, count: 1 })),
         })
       }
     }
 
     return {
-      start: new Date(Number.isFinite(from) ? from : Date.now() - hours * 3_600_000).toISOString(),
-      end: new Date(Number.isFinite(to) ? to : Date.now()).toISOString(),
+      start: new Date(range.from).toISOString(),
+      end: new Date(range.to).toISOString(),
       series,
       count: series.length,
     }
   }
 
-  /** 每个延迟监控在窗口内的统计 */
+  /** 每路探测在窗口内的统计 */
   async getPublicPingMetricStats(params: PingMetricStatsParams, signal?: AbortSignal): Promise<PingMetricStatsResponse> {
     const entity = params.uuid ?? params.entity_id ?? params.entity_ids?.[0]
     if (!entity)
       throw new RpcError(METHOD_NOT_FOUND, 'ping stats need a node')
-    const { hours, from, to } = resolveRange(params)
-    const maxPoints = params.max_points ?? params.downsample_points
-    let history: HubHistory
+    const range = resolveRange(params)
+    let samples: ProbeSample[]
     try {
-      history = await fetchNodeHistory(entity, { hours, points: maxPoints, series: 'ping' }, signal)
+      samples = await loadProbeSamples(entity, range, params.max_points ?? params.downsample_points, signal)
     }
     catch (error) {
       throw toRpcError(error)
     }
-    rememberProbes(history)
-    const ranged = withinRange(history, from, to)
-    // 裁剪过的自定义时间段不能沿用整窗的丢包率，改按桶估算
-    const trimmed = ranged.ping.length !== history.ping.length
-    const stats = pingStatsFor(entity, trimmed ? { ...ranged, loss: {} } : history).map((stat) => {
-      if (!trimmed)
-        return stat
-      const rows = ranged.ping.filter(row => String(row.task_id) === stat.task_id)
-      const loss = rows.length ? rows.reduce((sum, row) => sum + (row.loss ?? (row.latency === null ? 100 : 0)), 0) / rows.length : 0
-      return { ...stat, loss, loss_approximate: true }
-    })
+    const stats = pingStatsFor(entity, samples)
     return {
-      start: new Date(Number.isFinite(from) ? from : Date.now() - hours * 3_600_000).toISOString(),
-      end: new Date(Number.isFinite(to) ? to : Date.now()).toISOString(),
+      start: new Date(range.from).toISOString(),
+      end: new Date(range.to).toISOString(),
       interval_seconds: 60,
       stats,
       count: stats.length,
@@ -715,10 +729,10 @@ export class HubRpc {
 }
 
 // 单例实例
-let sharedRpc: HubRpc | null = null
+let sharedRpc: CfsmRpc | null = null
 
-export function getSharedRpc(): HubRpc {
+export function getSharedRpc(): CfsmRpc {
   if (!sharedRpc)
-    sharedRpc = new HubRpc()
+    sharedRpc = new CfsmRpc()
   return sharedRpc
 }

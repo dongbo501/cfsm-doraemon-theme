@@ -147,7 +147,7 @@ onBeforeUnmount(() => {
   left: 0.9rem;
   width: 4.6rem;
   aspect-ratio: 200 / 212;
-  background: url('/images/doraemon/doraemon.svg') center top / contain no-repeat;
+  background: url('/assets/images/doraemon/doraemon.svg') center top / contain no-repeat;
   filter: drop-shadow(0 -2px 6px rgb(0 60 110 / 0.18));
   pointer-events: none;
   transform-origin: 50% 100%;
@@ -215,7 +215,7 @@ onBeforeUnmount(() => {
 .dora-stage__egg-door {
   width: 0.8rem;
   height: 1.15rem;
-  background: url('/images/doraemon/door.svg') center / contain no-repeat;
+  background: url('/assets/images/doraemon/door.svg') center / contain no-repeat;
   filter: drop-shadow(0 0 1px #ffffff);
 }
 
@@ -264,7 +264,7 @@ onBeforeUnmount(() => {
 .dora-easter__bell {
   width: 4.4rem;
   height: 4.7rem;
-  background: url('/images/doraemon/doraemon.svg') center / contain no-repeat;
+  background: url('/assets/images/doraemon/doraemon.svg') center / contain no-repeat;
   filter: drop-shadow(0 6px 0 rgb(0 60 110 / 0.3));
   animation: dora-bell-ring 0.9s ease-in-out infinite;
   transform-origin: 50% 10%;
@@ -330,7 +330,7 @@ onBeforeUnmount(() => {
 .dora-easter__pocket {
   position: absolute;
   inset: 0;
-  background: url('/images/doraemon/pocket.svg') center / contain no-repeat;
+  background: url('/assets/images/doraemon/pocket.svg') center / contain no-repeat;
   filter: drop-shadow(0 6px 0 rgb(0 60 110 / 0.3));
   animation: dora-pocket-wobble 900ms ease-in-out 2;
 }

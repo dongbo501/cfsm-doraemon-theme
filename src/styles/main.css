@@ -629,7 +629,7 @@ header {
   left: 50%;
   width: 22px;
   height: 22px;
-  background: url('/images/doraemon/bell-charm.svg') center / contain no-repeat;
+  background: url('/assets/images/doraemon/bell-charm.svg') center / contain no-repeat;
   content: '';
   filter: drop-shadow(0 2px 0 rgb(0 60 110 / 0.25));
   transform: translateX(-50%);
@@ -973,7 +973,7 @@ header {
   left: 50%;
   width: 17px;
   height: 17px;
-  background: url('/images/doraemon/bell-charm.svg') center / contain no-repeat;
+  background: url('/assets/images/doraemon/bell-charm.svg') center / contain no-repeat;
   content: '';
   filter: drop-shadow(0 1.5px 0 rgb(0 60 110 / 0.22));
   transform: translateX(-50%);
@@ -1241,6 +1241,6 @@ html.dark {
   width: 1rem;
   height: 1rem;
   flex: none;
-  background: url('/images/doraemon/bell-charm.svg') center / contain no-repeat;
+  background: url('/assets/images/doraemon/bell-charm.svg') center / contain no-repeat;
   content: '';
 }

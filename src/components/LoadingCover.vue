@@ -20,7 +20,7 @@ const hasCustomBackground = computed(() => appStore.backgroundEnabled && Boolean
         <span class="dora-copter-loader__blade" />
         <span class="dora-copter-loader__stick" />
         <span class="dora-copter-loader__cap" />
-        <img class="dora-copter-loader__face" src="/images/doraemon/doraemon.svg" alt="" width="96" height="102">
+        <img class="dora-copter-loader__face" src="/assets/images/doraemon/doraemon.svg" alt="" width="96" height="102">
       </span>
       <span v-if="!hasCustomBackground" class="loading-cover__text">哆啦A梦正在翻口袋…</span>
       <span v-else class="sr-only">加载中</span>

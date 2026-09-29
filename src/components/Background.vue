@@ -1,11 +1,32 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
 
 const isLoaded = ref(false)
 const hasError = ref(false)
+
+/**
+ * CF-Server-Monitor 后台「外观设置」里配置了背景图时，Worker 会向页面注入
+ * body { background-image: ... !important }（移动端为 body::after）。
+ * 这时让出内置的天空背景，除非站长在主题设置里另外启用了自定义模式背景。
+ */
+const siteBackground = ref(false)
+
+function hasInjectedSiteBackground(): boolean {
+  if (typeof document === 'undefined' || !document.body)
+    return false
+  const body = getComputedStyle(document.body).backgroundImage
+  const after = getComputedStyle(document.body, '::after').backgroundImage
+  return (!!body && body !== 'none') || (!!after && after !== 'none')
+}
+
+onMounted(() => {
+  siteBackground.value = hasInjectedSiteBackground()
+})
+
+const useSiteBackground = computed(() => siteBackground.value && !appStore.backgroundEnabled)
 
 const showBackground = computed(() => appStore.backgroundEnabled)
 const currentUrl = computed(() => showBackground.value ? appStore.currentBackgroundUrl : '')
@@ -131,7 +152,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="background-container" :style="backgroundContainerStyle">
+  <div v-if="!useSiteBackground" class="background-container" :style="backgroundContainerStyle">
     <Transition name="fade">
       <div v-if="showDefaultBackground" class="default-background" aria-hidden="true">
         <div class="dora-sun" />
@@ -355,7 +376,7 @@ onUnmounted(() => {
 .dora-cloud {
   display: block;
   aspect-ratio: 200 / 104;
-  background: url('/images/doraemon/cloud.svg') center / contain no-repeat;
+  background: url('/assets/images/doraemon/cloud.svg') center / contain no-repeat;
   filter: drop-shadow(0 8px 0 rgb(0 90 150 / 0.1));
   animation: dora-cloud-drift 40s ease-in-out infinite alternate;
 }
@@ -408,7 +429,7 @@ onUnmounted(() => {
   display: block;
   width: 100%;
   height: 100%;
-  background: url('/images/doraemon/doraemon-fly.svg') center / contain no-repeat;
+  background: url('/assets/images/doraemon/doraemon-fly.svg') center / contain no-repeat;
   filter: drop-shadow(0 10px 8px rgb(0 60 110 / 0.25));
   animation: dora-flyer-bob 2.6s ease-in-out infinite;
 }

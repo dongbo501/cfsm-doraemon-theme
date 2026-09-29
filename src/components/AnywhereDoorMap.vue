@@ -131,7 +131,7 @@ function clearMarker(): void {
 
 onMounted(async () => {
   try {
-    const response = await fetch('/data/world-countries.geojson')
+    const response = await fetch('/assets/data/world-countries.geojson')
     if (!response.ok)
       throw new Error(`Map data request failed: ${response.status}`)
     const collection = await response.json() as { features: GeoFeature[] }
@@ -267,7 +267,7 @@ onMounted(async () => {
   display: inline-block;
   width: 0.72rem;
   height: 1.05rem;
-  background: url('/images/doraemon/door.svg') center / contain no-repeat;
+  background: url('/assets/images/doraemon/door.svg') center / contain no-repeat;
 }
 
 .door-map__heading small {

@@ -12,6 +12,7 @@ import { ProgressThin } from '@/components/ui/progress-thin'
 import { useNodeProviderMetadata } from '@/composables/useNodeProviderMetadata'
 import { UI_CONFIG } from '@/constants/ui'
 import { useAppStore } from '@/stores/app'
+import { flagUrl } from '@/utils/cfsm'
 import { formatCityNameZh } from '@/utils/cityNameHelper'
 import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatUptimeWithFormat, getStatus } from '@/utils/helper'
 import { getRealtimeTotalSpeed, getTrafficUsed, getTrafficUsedPercentage, hasTrafficLimit } from '@/utils/nodeMetricsHelper'
@@ -212,7 +213,7 @@ const nodeMetadataItemsByUuid = computed(() => {
 })
 
 function getFlagSrc(region: string): string {
-  return `/images/flags/${getRegionCode(region)}.svg`
+  return flagUrl(getRegionCode(region))
 }
 
 function getRegionAltText(region: string): string {

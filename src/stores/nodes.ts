@@ -3,7 +3,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { useAppStore } from '@/stores/app'
 
-/** hub 的分组是一个完整的分组名，空字符串表示未分组 */
+/** CFSM 的分组是一个完整的分组名，空字符串表示未分组 */
 function parseNodeGroups(group: string | null | undefined): string[] {
   const name = (group ?? '').trim()
   return name ? [name] : []
@@ -114,7 +114,7 @@ const useNodesStore = defineStore('nodes', () => {
   // ===== 计算属性 =====
   const nodeIndex = new Map<string, NodeData>()
 
-  /** 可见节点（登录后 hub 会返回未公开的节点，首页只在登录时展示它们） */
+  /** 可见节点（登录后 CFSM 会返回隐藏的服务器，首页只在登录时展示它们） */
   const visibleNodes = computed(() => appStore.privateFeaturesAllowed ? nodes.value : nodes.value.filter(n => !n.hidden))
 
   /** 在线节点数量 */
@@ -462,6 +462,34 @@ const useNodesStore = defineStore('nodes', () => {
   }
 
   /**
+   * 新增或更新部分节点，不移除其他节点（详情页只拉取单台服务器时使用）
+   */
+  function upsertNodes(clients: Record<string, Client>, statuses: Record<string, NodeStatus>): void {
+    let needSort = false
+    for (const [uuid, client] of Object.entries(clients)) {
+      if (!client)
+        continue
+      const status = statuses[uuid]
+      const existing = nodeIndex.get(uuid)
+      if (existing) {
+        if (applyClient(existing, client))
+          needSort = true
+        if (status)
+          applyStatus(existing, status)
+      }
+      else {
+        const node = createNodeFromClient(client)
+        if (status)
+          applyStatus(node, status)
+        addIndexedNode(node)
+        needSort = true
+      }
+    }
+    if (needSort)
+      sortNodesByWeight()
+  }
+
+  /**
    * 更新 WebSocket 连接状态
    */
   function updateWsState(state: WsConnectionState, attempts?: number): void {
@@ -495,6 +523,7 @@ const useNodesStore = defineStore('nodes', () => {
     initNodes,
     updateNodeStatuses,
     updateNodeClients,
+    upsertNodes,
     sortNodesByWeight,
     updateWsState,
     clearNodes,

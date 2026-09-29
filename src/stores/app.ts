@@ -823,7 +823,7 @@ function readStringSetting(settings: ThemeSettings, key: string, fallback = ''):
   return typeof value === 'string' ? value.trim() : fallback
 }
 
-/** 背景、彩蛋与音频地址：HTTPS 地址或站内 / 路径。hub 没有用户素材目录，不支持 local: */
+/** 背景、彩蛋与音频地址：HTTPS 地址或站内 / 路径，不支持 local: */
 function resolveBackgroundSource(value: unknown): string {
   if (typeof value !== 'string')
     return ''
@@ -913,6 +913,8 @@ const useAppStore = defineStore('app', () => {
   const authStatus = ref(getAuthSession().status)
   const privateFeaturesAllowed = computed(() => authStatus.value === 'authenticated')
   const connectionError = ref<boolean>(false)
+  /** 站点未公开且未登录 */
+  const accessDenied = ref<boolean>(false)
   const homeAdvancedToolsVisible = ref(false)
   const favoriteNodeIdSet = computed(() => new Set(
     (Array.isArray(favoriteNodeIds.value) ? favoriteNodeIds.value : [])
@@ -1002,7 +1004,7 @@ const useAppStore = defineStore('app', () => {
         return mode
       }
     }
-    return 'http'
+    return 'websocket'
   })
 
   // 字节格式化精度（固定配置）
@@ -1021,7 +1023,7 @@ const useAppStore = defineStore('app', () => {
     return typeof value === 'string' ? value : ''
   })
 
-  const dataUpdateInterval = computed<number>(() => readNumberSetting(themeSettings.value, 'dataUpdateInterval', 3, 1, 60))
+  const dataUpdateInterval = computed<number>(() => readNumberSetting(themeSettings.value, 'dataUpdateInterval', 10, 3, 300))
 
   const stopEarth = computed<boolean>(() => readBooleanSetting(themeSettings.value, 'stopEarth', false))
 
@@ -1371,6 +1373,7 @@ const useAppStore = defineStore('app', () => {
     authStatus,
     privateFeaturesAllowed,
     publicSettings,
+    accessDenied,
     connectionError,
     homeScrollPosition,
     updateThemeMode,

@@ -613,7 +613,7 @@ const nodeCardGridClass = computed(() => {
 .dora-home-inscription__bell {
   width: 2rem;
   height: 2rem;
-  background: url('/images/doraemon/bell.svg') center / contain no-repeat;
+  background: url('/assets/images/doraemon/bell.svg') center / contain no-repeat;
   filter: drop-shadow(0 3px 0 rgb(0 60 110 / 0.25));
 }
 

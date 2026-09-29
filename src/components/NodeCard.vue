@@ -8,6 +8,7 @@ import { DataTooltip } from '@/components/ui/data-tooltip'
 import { ProgressThin } from '@/components/ui/progress-thin'
 import { useNodePingDisplay } from '@/composables/useNodePingDisplay'
 import { useAppStore } from '@/stores/app'
+import { flagUrl } from '@/utils/cfsm'
 import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, getStatus, getUptimeDays } from '@/utils/helper'
 import { getDiskPercentage, getMemoryPercentage, getTrafficUsed, getTrafficUsedPercentage, hasTrafficLimit } from '@/utils/nodeMetricsHelper'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
@@ -274,7 +275,7 @@ function hasRegion(region: string | null | undefined): boolean {
         </span>
         <img
           v-if="hasRegion(props.node.region)"
-          :src="`/images/flags/${getRegionCode(props.node.region)}.svg`"
+          :src="flagUrl(getRegionCode(props.node.region))"
           :alt="getRegionAltText(props.node.region)"
           class="dora-node-flag size-5 shrink-0"
         >

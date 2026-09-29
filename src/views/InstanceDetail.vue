@@ -15,6 +15,7 @@ import { LOAD_RECORD_MAX_COUNT } from '@/constants/load'
 import { loadNodeLoadRecords } from '@/services/history.service'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
+import { flagUrl } from '@/utils/cfsm'
 import { formatCityNameZh } from '@/utils/cityNameHelper'
 import { getCpuBenchmarkRating, getPassMarkCpuLookupUrl } from '@/utils/cpuBenchmark'
 import * as financeHelper from '@/utils/financeHelper'
@@ -494,7 +495,7 @@ const metricCards = computed<MetricCard[]>(() => appStore.detailMetricCardOrder.
           <Icon icon="tabler:arrow-left" :width="16" :height="16" />
         </Button>
         <div class="min-w-0 text-lg font-bold flex gap-2 items-center">
-          <img :src="`/images/flags/${getRegionCode(data.region)}.svg`" :alt="getRegionAltText(data.region)" class="size-6">
+          <img :src="flagUrl(getRegionCode(data.region))" :alt="getRegionAltText(data.region)" class="size-6">
           <span class="truncate">{{ data.name }}</span>
         </div>
         <Badge :variant="data.online ? 'default' : 'destructive'" class="text-xs !rounded">

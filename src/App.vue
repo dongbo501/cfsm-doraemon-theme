@@ -11,6 +11,7 @@ import Footer from './components/Footer.vue'
 import Header from './components/Header.vue'
 import LoadingCover from './components/LoadingCover.vue'
 import Provider from './components/Provider.vue'
+import TurnstileGate from './components/TurnstileGate.vue'
 
 const appStore = useAppStore()
 
@@ -78,8 +79,8 @@ onUnmounted(() => {
           <div v-if="appStore.connectionError" class="relative z-10 mx-auto max-w-[1280px] px-4 pt-4">
             <Alert variant="destructive" class="!pr-28 border-none bg-destructive/10 backdrop-blur-xs rounded-md">
               <Icon icon="tabler:plug-connected-x" />
-              <AlertTitle>RPC 服务错误</AlertTitle>
-              <AlertDescription>连接服务器失败，请检查网络后重试。</AlertDescription>
+              <AlertTitle>任意门连接失败</AlertTitle>
+              <AlertDescription>无法连接 CF-Server-Monitor 接口，请检查网络后重试。</AlertDescription>
               <AlertAction class="top-1/2 -translate-y-1/2">
                 <Button size="sm" variant="outline" :disabled="isRetryingConnection" @click="retryConnection">
                   <Icon :icon="isRetryingConnection ? 'tabler:loader-2' : 'tabler:refresh'" :class="isRetryingConnection && 'animate-spin'" />
@@ -88,7 +89,17 @@ onUnmounted(() => {
               </AlertAction>
             </Alert>
           </div>
-          <div class="max-w-[1280px] mx-auto">
+          <div v-if="appStore.accessDenied" class="relative z-10 mx-auto max-w-[560px] px-4 pt-10">
+            <div class="access-denied">
+              <img src="/assets/images/doraemon/doraemon.svg" alt="" width="88" height="94">
+              <h2>这座道具监控站没有对外开放</h2>
+              <p>站长关闭了公开访问，登录后才能查看服务器状态。</p>
+              <Button as="a" href="/admin#admin">
+                <Icon icon="icon-park-outline:setting" />前往后台登录
+              </Button>
+            </div>
+          </div>
+          <div v-else class="max-w-[1280px] mx-auto">
             <RouterView v-slot="{ Component, route }">
               <Transition
                 :css="!appStore.disablePageAnimation"
@@ -107,6 +118,33 @@ onUnmounted(() => {
         <Footer />
       </div>
     </Transition>
+    <TurnstileGate />
     <Toaster rich-colors close-button position="top-center" />
   </Provider>
 </template>
+
+<style scoped>
+.access-denied {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 28px 20px;
+  border-radius: 24px;
+  border-bottom: 6px solid #e60012;
+  background: var(--card);
+  color: var(--card-foreground);
+  text-align: center;
+  box-shadow: 0 18px 50px rgb(0 40 80 / 30%);
+}
+
+.access-denied h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.access-denied p {
+  font-size: 0.875rem;
+  opacity: 0.8;
+}
+</style>

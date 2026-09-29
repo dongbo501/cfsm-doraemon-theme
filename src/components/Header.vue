@@ -12,7 +12,7 @@ const appStore = useAppStore()
 
 const isScrolled = inject<ReturnType<typeof ref<boolean>>>('isScrolled', ref(false))
 
-const siteFavicon = '/images/doraemon/doraemon.svg'
+const siteFavicon = '/assets/images/doraemon/doraemon.svg'
 
 const actionButtons = computed(() => {
   const nextThemeTitle = appStore.isDark ? '切换到晴空模式' : '切换到夜空充电模式'
@@ -35,6 +35,14 @@ const actionButtons = computed(() => {
     action: 'toggleTheme',
   })
 
+  if (!appStore.loading && appStore.isLoggedIn && router.currentRoute.value.name !== 'theme-settings') {
+    buttons.push({
+      title: '哆啦A梦主题设置',
+      icon: 'tabler:palette',
+      action: 'openThemeSettings',
+    })
+  }
+
   if (!appStore.loading && (appStore.privateFeaturesAllowed || !appStore.hideAdminEntryWhenLoggedOut)) {
     buttons.push({
       title: '后台管理',
@@ -53,8 +61,12 @@ function handleButtonClick(action: string) {
     case 'toggleHomeTools':
       appStore.homeAdvancedToolsVisible = !appStore.homeAdvancedToolsVisible
       break
+    case 'openThemeSettings':
+      void router.push({ name: 'theme-settings' })
+      break
     case 'jumpToSetting':
-      location.href = '/admin'
+      // 管理后台由 CF-Server-Monitor 内置默认主题接管
+      location.href = '/admin#admin'
       break
   }
 }
@@ -65,7 +77,7 @@ function revealPocketEasterEgg(): void {
   }))
 }
 
-const sitename = computed(() => appStore.publicSettings?.sitename || 'Monitor')
+const sitename = computed(() => appStore.publicSettings?.sitename || '哆啦A梦探针')
 </script>
 
 <template>

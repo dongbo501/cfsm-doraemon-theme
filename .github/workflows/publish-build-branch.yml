@@ -1,0 +1,74 @@
+name: Publish Build Branch
+
+# 构建产物（index.html + assets/）发布到 build 分支。
+# CF-Server-Monitor 的自定义主题地址填 https://github.com/<owner>/<repo>/tree/build，
+# 主题商店也按 build 分支的提交列出可选版本。
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-build-branch
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit to build branch
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./theme.json').version")
+          subject=$(git log -1 --format=%s "$SOURCE_SHA")
+          short=$(git rev-parse --short "$SOURCE_SHA")
+
+          worktree="$RUNNER_TEMP/build-branch"
+          if git ls-remote --exit-code --heads origin build >/dev/null 2>&1; then
+            git fetch origin build
+            git worktree add "$worktree" origin/build
+            git -C "$worktree" checkout -B build
+          else
+            git worktree add --detach "$worktree"
+            git -C "$worktree" checkout --orphan build
+            git -C "$worktree" rm -rfq .
+          fi
+
+          find "$worktree" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a dist/. "$worktree"/
+
+          cd "$worktree"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Build output unchanged."
+            exit 0
+          fi
+          git commit -m "v${version}: ${subject} (${short})"
+          git push origin HEAD:build

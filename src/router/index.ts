@@ -1,7 +1,10 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHashHistory } from 'vue-router'
 
+/**
+ * CFSM 主题路由约定：首页 /#/，详情页 /#/server/:id；管理后台由内置默认主题接管（/admin#admin）
+ */
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: createWebHashHistory(),
   routes: [
     {
       path: '/',
@@ -9,9 +12,18 @@ const router = createRouter({
       component: () => import('@/views/HomeView.vue'),
     },
     {
-      path: '/instance/:id',
+      path: '/server/:id',
       name: 'instance-detail',
       component: () => import('@/views/InstanceDetail.vue'),
+    },
+    {
+      path: '/theme-settings',
+      name: 'theme-settings',
+      component: () => import('@/views/ThemeSettings.vue'),
+    },
+    {
+      path: '/:pathMatch(.*)*',
+      redirect: '/',
     },
   ],
 })
